@@ -42,6 +42,7 @@
     <div class="row muted" style="margin-top:6px">
       <label class="key"><input type="checkbox" data-layer="extracted" checked><span class="ring" style="border-color:var(--extracted)"></span>retail (roam data)</label>
       <label class="key"><input type="checkbox" data-layer="links" checked><span class="dot" style="background:var(--link);border-radius:1px;height:3px"></span>links</label>
+      <label class="key" title="Shown once you zoom in far enough to read them"><input type="checkbox" data-layer="ids"><span style="font-size:10px;font-weight:600">#</span>node ids</label>
       <label class="key" id="suspectKey" style="display:none" title="Retail nodes inside a trust-confirmed neighbour's circle where no trust ever landed"><input type="checkbox" data-layer="suspect" checked><span class="ring" style="border-color:var(--suspect);border-style:dashed"></span>suspected duplicate</label>
     </div>
     <div id="live">
@@ -62,7 +63,7 @@ const cv = document.getElementById('c');
 const ctx = cv.getContext('2d');
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const SOURCE = ['extracted', 'recorded', 'navmesh'];
-const show = { extracted: true, recorded: true, navmesh: true, links: true, probes: true, suspect: true };
+const show = { extracted: true, recorded: true, navmesh: true, links: true, probes: true, suspect: true, ids: false };
 let zones = [], zone = null, data = null, live = null, idIndex = null, view = null, colors = {}, pollTimer = null, moved = false;
 let suspect = new Set(), suspectInto = {}, highlight = null;
 
@@ -132,6 +133,17 @@ function draw() {
     ctx.strokeStyle = colors.suspect; ctx.lineWidth = 1.5 * dpr; ctx.setLineDash([3 * dpr, 3 * dpr]);
     rings([...suspect].map(i => nodes[i]).filter(visible));
     ctx.setLineDash([]); ctx.lineWidth = 1 * dpr;
+  }
+  // ids only once nodes sit far enough apart on screen to read them (2.5 px per yalm)
+  if (show.ids && view.s >= 2.5 * dpr) {
+    ctx.fillStyle = colors.ink; ctx.font = `${10 * dpr}px system-ui, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    nodes.forEach((n, i) => {
+      if (!shown(i)) return;
+      const x = sx(n[0]), y = sy(n[1]);
+      if (x < -40 || y < -40 || x > cv.width + 40 || y > cv.height + 40) return;
+      ctx.fillText(data.ids[i], x, y + Math.max(1.5 * dpr, n[3] * view.s) + 2 * dpr);
+    });
   }
   if (highlight) {
     // a found node or position: crosshair and ring so it stands out at any zoom
