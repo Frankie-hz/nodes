@@ -180,13 +180,13 @@ async function pick(name) {
   if (location.hash.slice(1) !== name) history.replaceState(null, '', '#' + name);
   document.getElementById('stats').textContent = 'Loading';
   live = null; document.getElementById('live').style.display = 'none';
-  const d = await (await fetch(`zones/${name}.json`)).json();
+  const d = await (await fetch(`zones/${name}.json?` + Date.now(), { cache: 'no-store' })).json();
   if (name !== zone) return;
   data = d;
   idIndex = new Map(data.ids.map((id, i) => [id, i]));
   suspect = new Set(); suspectInto = {};
   try {
-    const res = await fetch(`flags/${name}.json`);
+    const res = await fetch(`flags/${name}.json?` + Date.now(), { cache: 'no-store' });
     if (res.ok) {
       const f = await res.json();
       suspect = new Set(f.suspect.map(id => idIndex.get(id)).filter(i => i !== undefined));
@@ -268,7 +268,7 @@ document.getElementById('toggle').addEventListener('click', e => {
 (async () => {
   for (const k of ['bg', 'link', 'extracted', 'recorded', 'navmesh', 'matched', 'new', 'probe', 'open', 'muted', 'suspect']) colors[k] = css('--' + k);
   resize();
-  zones = await (await fetch('zones/index.json')).json();
+  zones = await (await fetch('zones/index.json?' + Date.now(), { cache: 'no-store' })).json();
   document.getElementById('zone').innerHTML = zones.map(z => `<option value="${z.zone}">${z.name}</option>`).join('');
   pick(location.hash.slice(1));
 })();
