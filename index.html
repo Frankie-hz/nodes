@@ -1,1 +1,261 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Pathing Nodes</title><style>body{margin:0;padding:24px 16px;background:#111418;color:#e6e9ee;font:15px/1.5 system-ui,sans-serif}a{color:#6fb3ff}h1{font-size:20px;margin:0 0 12px}</style></head><body><h1>Pathing nodes by zone</h1><ul><li><a href="valkurm_dunes/">Valkurm Dunes</a></li></ul></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pathing Nodes</title>
+<style>
+  :root { --bg: #111418; --panel: #1b2026; --ink: #e6e9ee; --muted: #8a94a3; --line: #2a313a;
+          --link: #2c343d; --extracted: #aab3c0; --recorded: #4fa3a0; --navmesh: #8f7bb8;
+          --matched: #3fb27f; --new: #e2559b; --probe: #4c8dd6; --open: #f0a33a; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; cursor: grab; touch-action: none; }
+  #hud { position: fixed; top: 12px; left: 12px; background: var(--panel); padding: 10px 12px; border-radius: 6px;
+         max-width: min(560px, calc(100vw - 48px)); box-shadow: 0 2px 8px #0006; }
+  #hud b { font-weight: 600; }
+  .row { display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: center; }
+  .muted { color: var(--muted); }
+  select { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px;
+           font: inherit; font-size: 14px; max-width: 100%; }
+  h1 { font-size: 14px; font-weight: 600; margin: 0; }
+  label.key { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+  label.key input { margin: 0; accent-color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .ring { width: 7px; height: 7px; border-radius: 50%; display: inline-block; border: 1.5px solid; }
+  #live { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+  #tip { position: fixed; pointer-events: none; background: var(--panel); padding: 4px 8px; border-radius: 4px; display: none; white-space: pre; }
+  #toggle { display: none; }
+  @media (max-width: 600px) {
+    #hud { top: 8px; left: 8px; right: 8px; max-width: none; padding: 8px 10px; }
+    #toggle { display: inline; margin-left: auto; background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 4px; font: inherit; padding: 2px 8px; }
+    #hud.min .more { display: none !important; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div class="row"><h1>Pathing nodes</h1><select id="zone" aria-label="Zone"></select><button id="toggle">hide</button></div>
+  <div class="more">
+    <div class="row" id="stats" style="margin-top:8px">Loading</div>
+    <div class="row muted" style="margin-top:6px">
+      <label class="key"><input type="checkbox" data-layer="extracted" checked><span class="ring" style="border-color:var(--extracted)"></span>retail (roam data)</label>
+      <label class="key"><input type="checkbox" data-layer="recorded" checked><span class="ring" style="border-color:var(--recorded)"></span>generated</label>
+      <label class="key"><input type="checkbox" data-layer="navmesh" checked><span class="ring" style="border-color:var(--navmesh)"></span>generated (navmesh)</label>
+      <label class="key"><input type="checkbox" data-layer="links" checked><span class="dot" style="background:var(--link);border-radius:1px;height:3px"></span>links</label>
+    </div>
+    <div id="live">
+      <div class="row" id="lstats"></div>
+      <div class="row muted" style="margin-top:6px">
+        <label class="key"><input type="checkbox" data-layer="probes" checked><span class="dot" style="background:var(--matched)"></span>trust confirmed</label>
+        <span class="key"><span class="dot" style="background:var(--new)"></span>new node</span>
+        <span class="key"><span class="dot" style="background:var(--probe)"></span>probe</span>
+        <span class="key"><span class="dot" style="background:var(--open)"></span>open circle</span>
+      </div>
+      <div class="muted" id="when"></div>
+    </div>
+  </div>
+</div>
+<div id="tip"></div>
+<script>
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const SOURCE = ['extracted', 'recorded', 'navmesh'];
+const show = { extracted: true, recorded: true, navmesh: true, links: true, probes: true };
+let zones = [], zone = null, data = null, live = null, idIndex = null, view = null, colors = {}, pollTimer = null, moved = false;
+
+function resize() {
+  cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio;
+  if (data && !moved) fit();
+  draw();
+}
+addEventListener('resize', resize);
+
+function fit() {
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const p of data.nodes) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }
+  const pad = 20;
+  x0 -= pad; x1 += pad; z0 -= pad; z1 += pad;
+  const s = Math.min(cv.width / (x1 - x0), cv.height / (z1 - z0));
+  view = { s, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2 };
+}
+// Screen y grows down, so world z is flipped to keep north up.
+const sx = x => cv.width / 2 + (x - view.cx) * view.s;
+const sy = z => cv.height / 2 - (z - view.cz) * view.s;
+
+function dot(x, z, r, color) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(sx(x), sy(z), r, 0, 7); ctx.fill(); }
+function cross(x, z, r) {
+  const a = sx(x), b = sy(z);
+  ctx.beginPath(); ctx.moveTo(a - r, b - r); ctx.lineTo(a + r, b + r); ctx.moveTo(a + r, b - r); ctx.lineTo(a - r, b + r); ctx.stroke();
+}
+function rings(list) {
+  const dpr = devicePixelRatio;
+  ctx.beginPath();
+  for (const n of list) {
+    const r = Math.max(1.5 * dpr, n[3] * view.s);
+    ctx.moveTo(sx(n[0]) + r, sy(n[1])); ctx.arc(sx(n[0]), sy(n[1]), r, 0, 7);
+  }
+  ctx.stroke();
+}
+
+function draw() {
+  if (!data || !view) return;
+  const dpr = devicePixelRatio;
+  ctx.fillStyle = colors.bg; ctx.fillRect(0, 0, cv.width, cv.height);
+  const nodes = data.nodes;
+  const visible = n => show[SOURCE[n[4]]];
+  ctx.lineWidth = 1 * dpr;
+  if (show.links) {
+    ctx.strokeStyle = colors.link; ctx.beginPath();
+    for (const [a, b] of data.links) {
+      const p = nodes[a], q = nodes[b];
+      if (!visible(p) || !visible(q)) continue;
+      ctx.moveTo(sx(p[0]), sy(p[1])); ctx.lineTo(sx(q[0]), sy(q[1]));
+    }
+    ctx.stroke();
+  }
+  const probes = live && show.probes;
+  if (probes) {
+    ctx.fillStyle = colors.probe + '14';
+    for (const p of live.probes) { ctx.beginPath(); ctx.arc(sx(p[0]), sy(p[1]), Math.hypot(p[2] - p[0], p[3] - p[1]) * view.s, 0, 7); ctx.fill(); }
+  }
+  const matched = new Set(probes ? live.matched.map(id => idIndex.get(id)).filter(i => i !== undefined) : []);
+  for (let s = 0; s < 3; s++) {
+    if (!show[SOURCE[s]]) continue;
+    ctx.strokeStyle = colors[SOURCE[s]];
+    rings(nodes.filter((n, i) => n[4] === s && !matched.has(i)));
+  }
+  if (!probes) return;
+  ctx.strokeStyle = colors.matched;
+  rings([...matched].map(i => nodes[i]).filter(visible));
+  ctx.strokeStyle = colors.probe + '99'; ctx.beginPath();
+  for (const p of live.probes) { ctx.moveTo(sx(p[0]), sy(p[1])); ctx.lineTo(sx(p[2]), sy(p[3])); }
+  ctx.stroke();
+  for (const p of live.probes) dot(p[0], p[1], 1.5 * dpr, colors.probe);
+  for (const l of live.landed) dot(l[0], l[1], 3 * dpr, colors.matched);
+  for (const n of live.new) dot(n[0], n[1], 5 * dpr, colors.new);
+  ctx.lineWidth = 1.5 * dpr;
+  ctx.strokeStyle = colors.open; for (const o of live.open) cross(o[0], o[1], 3 * dpr);
+  ctx.strokeStyle = colors.muted; for (const o of live.skipped || []) cross(o[0], o[1], 3 * dpr);
+}
+
+function stats() {
+  const z = zones.find(z => z.zone === zone);
+  const [e, r, n] = z.nodes;
+  document.getElementById('stats').innerHTML =
+    `<span><b>${(e + r + n).toLocaleString()}</b> nodes</span><span><b>${e.toLocaleString()}</b> retail</span>` +
+    `<span><b>${(r + n).toLocaleString()}</b> generated</span><span><b>${z.links.toLocaleString()}</b> links</span>`;
+}
+
+async function loadLive() {
+  const want = zone;
+  let st = null;
+  try {
+    const res = await fetch(`live/${want}/state.json?` + Date.now());
+    if (res.ok) st = await res.json();
+  } catch (e) { st = null; }
+  if (want !== zone) return;
+  live = st;
+  document.getElementById('live').style.display = live ? 'block' : 'none';
+  if (live) {
+    const s = live.stats;
+    document.getElementById('lstats').innerHTML =
+      `<span>Live trust probing:</span><span><b>${s.probes}</b> probes</span><span><b>${s.new}</b> new nodes</span>` +
+      `<span><b>${s.proven}</b> of ${s.circles} circles proven</span><span><b>${s.open}</b> open</span><span><b>${s.unreached || 0}</b> unreached</span>`;
+    document.getElementById('when').textContent = 'Updated ' + new Date(live.updated * 1000).toLocaleString();
+  }
+  draw();
+}
+
+async function pick(name) {
+  if (!zones.some(z => z.zone === name)) name = zones.some(z => z.zone === 'valkurm_dunes') ? 'valkurm_dunes' : zones[0].zone;
+  zone = name;
+  document.getElementById('zone').value = name;
+  document.title = zones.find(z => z.zone === name).name + ' - Pathing Nodes';
+  if (location.hash.slice(1) !== name) history.replaceState(null, '', '#' + name);
+  document.getElementById('stats').textContent = 'Loading';
+  live = null; document.getElementById('live').style.display = 'none';
+  const d = await (await fetch(`zones/${name}.json`)).json();
+  if (name !== zone) return;
+  data = d;
+  idIndex = new Map(data.ids.map((id, i) => [id, i]));
+  moved = false;
+  fit(); stats(); draw();
+  loadLive();
+  clearInterval(pollTimer);
+  pollTimer = setInterval(loadLive, 30000);
+}
+
+function zoomAt(cx, cy, k) {
+  const mx = cx * devicePixelRatio, my = cy * devicePixelRatio;
+  const wx = view.cx + (mx - cv.width / 2) / view.s, wz = view.cz - (my - cv.height / 2) / view.s;
+  view.s *= k;
+  view.cx = wx - (mx - cv.width / 2) / view.s; view.cz = wz + (my - cv.height / 2) / view.s;
+  moved = true;
+  draw();
+}
+
+let drag = null, pinch = null;
+const pointers = new Map();
+cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, [e.clientX, e.clientY]); drag = [e.clientX, e.clientY]; cv.style.cursor = 'grabbing'; });
+cv.addEventListener('pointerup', e => { pointers.delete(e.pointerId); pinch = null; drag = pointers.size ? [...pointers.values()][0] : null; cv.style.cursor = 'grab'; });
+cv.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinch = null; drag = null; });
+cv.addEventListener('pointermove', e => {
+  if (!view) return;
+  const tip = document.getElementById('tip');
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    if (pinch) zoomAt((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, d / pinch);
+    pinch = d; tip.style.display = 'none'; return;
+  }
+  if (drag && pointers.size) {
+    view.cx -= (e.clientX - drag[0]) * devicePixelRatio / view.s;
+    view.cz += (e.clientY - drag[1]) * devicePixelRatio / view.s;
+    drag = [e.clientX, e.clientY]; moved = true; draw();
+  }
+  if (e.pointerType !== 'mouse') return;
+  const wx = view.cx + (e.clientX * devicePixelRatio - cv.width / 2) / view.s;
+  const wz = view.cz - (e.clientY * devicePixelRatio - cv.height / 2) / view.s;
+  let text = `X ${wx.toFixed(1)}  Z ${wz.toFixed(1)}`;
+  let best = -1, bd = Infinity;
+  const reach = 10 * devicePixelRatio / view.s;
+  data.nodes.forEach((n, i) => {
+    if (!show[SOURCE[n[4]]]) return;
+    const d = Math.hypot(n[0] - wx, n[1] - wz);
+    if (d <= Math.max(reach, n[3]) && d < bd) { best = i; bd = d; }
+  });
+  if (best >= 0) {
+    const n = data.nodes[best];
+    text += `\nnode ${data.ids[best]}  ${['retail', 'generated', 'generated (navmesh)'][n[4]]}  radius ${n[3]}`;
+  }
+  tip.style.display = 'block'; tip.style.left = (e.clientX + 14) + 'px'; tip.style.top = (e.clientY + 14) + 'px';
+  tip.textContent = text;
+});
+cv.addEventListener('pointerleave', () => { document.getElementById('tip').style.display = 'none'; });
+cv.addEventListener('wheel', e => { e.preventDefault(); if (view) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+cv.addEventListener('dblclick', () => { if (data) { moved = false; fit(); draw(); } });
+
+for (const box of document.querySelectorAll('input[data-layer]')) {
+  box.addEventListener('change', () => { show[box.dataset.layer] = box.checked; draw(); });
+}
+document.getElementById('zone').addEventListener('change', e => pick(e.target.value));
+addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h && h !== zone) pick(h); });
+document.getElementById('toggle').addEventListener('click', e => {
+  const hud = document.getElementById('hud');
+  hud.classList.toggle('min');
+  e.target.textContent = hud.classList.contains('min') ? 'show' : 'hide';
+});
+
+(async () => {
+  for (const k of ['bg', 'link', 'extracted', 'recorded', 'navmesh', 'matched', 'new', 'probe', 'open', 'muted']) colors[k] = css('--' + k);
+  resize();
+  zones = await (await fetch('zones/index.json')).json();
+  document.getElementById('zone').innerHTML = zones.map(z => `<option value="${z.zone}">${z.name}</option>`).join('');
+  pick(location.hash.slice(1));
+})();
+</script>
+</body>
+</html>
