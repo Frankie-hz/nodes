@@ -2,8 +2,8 @@
 
 python tools/build_zones.py <LSB checkout> [git ref, default retail-pathing-nodes]
 Each zone file: {"nodes": [[x, z, y, radius, source], ...], "ids": [...], "links": [[i, j], ...]} with source 0 = extracted
-from retail roam data, 1 = generated on recorded ground, 2 = generated on navmesh-only ground; links are node indexes,
-listed once.
+from retail roam data (generated nodes, sources 1 and 2, are left out); links are node indexes, listed once. Zones with no
+retail nodes are left out.
 """
 import json
 import os
@@ -27,7 +27,9 @@ def parse(text):
         m = LINE.match(line)
         if m:
             links = [int(v) for v in m.group(7).split(',') if v.strip()]
-            rows.append((int(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4)), float(m.group(5)), SOURCES[m.group(6)], links))
+            # generated nodes matched trust landings no better than chance in Valkurm (1-3% within 2 y), so only retail ones are kept
+            if SOURCES[m.group(6)] == 0:
+                rows.append((int(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4)), float(m.group(5)), 0, links))
     rows.sort()
     index = {r[0]: i for i, r in enumerate(rows)}
     nodes = [[round(x, 2), round(z, 2), round(y, 2), round(r, 2), s] for _, x, y, z, r, s, _ in rows]

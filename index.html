@@ -40,8 +40,6 @@
     <div class="row" id="stats" style="margin-top:8px">Loading</div>
     <div class="row muted" style="margin-top:6px">
       <label class="key"><input type="checkbox" data-layer="extracted" checked><span class="ring" style="border-color:var(--extracted)"></span>retail (roam data)</label>
-      <label class="key"><input type="checkbox" data-layer="recorded" checked><span class="ring" style="border-color:var(--recorded)"></span>generated</label>
-      <label class="key"><input type="checkbox" data-layer="navmesh" checked><span class="ring" style="border-color:var(--navmesh)"></span>generated (navmesh)</label>
       <label class="key"><input type="checkbox" data-layer="links" checked><span class="dot" style="background:var(--link);border-radius:1px;height:3px"></span>links</label>
       <label class="key" id="suspectKey" style="display:none" title="Retail nodes inside a trust-confirmed neighbour's circle where no trust ever landed"><input type="checkbox" data-layer="suspect" checked><span class="ring" style="border-color:var(--suspect);border-style:dashed"></span>suspected duplicate</label>
     </div>
@@ -150,10 +148,8 @@ function draw() {
 
 function stats() {
   const z = zones.find(z => z.zone === zone);
-  const [e, r, n] = z.nodes;
   document.getElementById('stats').innerHTML =
-    `<span><b>${(e + r + n).toLocaleString()}</b> nodes</span><span><b>${e.toLocaleString()}</b> retail</span>` +
-    `<span><b>${(r + n).toLocaleString()}</b> generated</span><span><b>${z.links.toLocaleString()}</b> links</span>`;
+    `<span><b>${z.nodes[0].toLocaleString()}</b> retail nodes</span><span><b>${z.links.toLocaleString()}</b> links</span>`;
 }
 
 async function loadLive() {
