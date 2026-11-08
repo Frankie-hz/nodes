@@ -35,7 +35,8 @@
 <body>
 <canvas id="c"></canvas>
 <div id="hud">
-  <div class="row"><h1>Pathing nodes</h1><select id="zone" aria-label="Zone"></select><a href="chase/" style="color:#6fb3ff">chase model</a><button id="toggle">hide</button></div>
+  <div class="row"><h1>Pathing nodes</h1><select id="zone" aria-label="Zone"></select><input id="find" placeholder="node # or @x,z" aria-label="Go to node" style="width:120px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:5px 8px;font:inherit"><a href="chase/" style="color:#6fb3ff">chase model</a><button id="toggle">hide</button></div>
+  <div class="muted" id="found" style="margin-top:4px"></div>
   <div class="more">
     <div class="row" id="stats" style="margin-top:8px">Loading</div>
     <div class="row muted" style="margin-top:6px">
@@ -63,7 +64,7 @@ const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).
 const SOURCE = ['extracted', 'recorded', 'navmesh'];
 const show = { extracted: true, recorded: true, navmesh: true, links: true, probes: true, suspect: true };
 let zones = [], zone = null, data = null, live = null, idIndex = null, view = null, colors = {}, pollTimer = null, moved = false;
-let suspect = new Set(), suspectInto = {};
+let suspect = new Set(), suspectInto = {}, highlight = null;
 
 function resize() {
   cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio;
@@ -132,6 +133,15 @@ function draw() {
     rings([...suspect].map(i => nodes[i]).filter(visible));
     ctx.setLineDash([]); ctx.lineWidth = 1 * dpr;
   }
+  if (highlight) {
+    // a found node or position: crosshair and ring so it stands out at any zoom
+    const hx = sx(highlight[0]), hy = sy(highlight[1]), r = Math.max(10 * dpr, 6 * view.s);
+    ctx.strokeStyle = colors.ink; ctx.lineWidth = 2 * dpr;
+    ctx.beginPath(); ctx.arc(hx, hy, r, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(hx - r * 1.8, hy); ctx.lineTo(hx - r * 0.5, hy); ctx.moveTo(hx + r * 0.5, hy); ctx.lineTo(hx + r * 1.8, hy);
+    ctx.moveTo(hx, hy - r * 1.8); ctx.lineTo(hx, hy - r * 0.5); ctx.moveTo(hx, hy + r * 0.5); ctx.lineTo(hx, hy + r * 1.8); ctx.stroke();
+    ctx.lineWidth = 1 * dpr;
+  }
   if (!probes) return;
   ctx.strokeStyle = colors.matched;
   rings([...matched].map(i => nodes[i]).filter(visible));
@@ -172,12 +182,39 @@ async function loadLive() {
   draw();
 }
 
-async function pick(name) {
+// '#zone', '#zone:1234' (a node id) or '#zone:@x,z' (a position)
+function parseHash() {
+  const [name, spec] = decodeURIComponent(location.hash.slice(1)).split(':');
+  return { name, spec: spec || null };
+}
+
+function focus(spec) {
+  let at = null, label = '';
+  if (spec.startsWith('@')) {
+    const [x, z] = spec.slice(1).split(',').map(Number);
+    if (Number.isFinite(x) && Number.isFinite(z)) { at = [x, z]; label = `(${x}, ${z})`; }
+  } else {
+    const i = idIndex.get(Number(spec));
+    if (i !== undefined) { at = [data.nodes[i][0], data.nodes[i][1]]; label = `node ${spec}`; }
+  }
+  const msg = document.getElementById('found');
+  if (!at) { msg.textContent = `no node ${spec} in this zone`; return false; }
+  highlight = at;
+  view = { s: Math.min(cv.width, cv.height) / 90, cx: at[0], cz: at[1] };
+  moved = true;
+  msg.textContent = `${label} at X ${at[0].toFixed(1)}, Z ${at[1].toFixed(1)}`;
+  history.replaceState(null, '', `#${zone}:${spec}`);
+  draw();
+  return true;
+}
+
+async function pick(name, spec = null) {
   if (!zones.some(z => z.zone === name)) name = zones.some(z => z.zone === 'valkurm_dunes') ? 'valkurm_dunes' : zones[0].zone;
   zone = name;
+  highlight = null; document.getElementById('found').textContent = '';
   document.getElementById('zone').value = name;
   document.title = zones.find(z => z.zone === name).name + ' - Pathing Nodes';
-  if (location.hash.slice(1) !== name) history.replaceState(null, '', '#' + name);
+  if (!spec && location.hash.slice(1) !== name) history.replaceState(null, '', '#' + name);
   document.getElementById('stats').textContent = 'Loading';
   live = null; document.getElementById('live').style.display = 'none';
   const d = await (await fetch(`zones/${name}.json?` + Date.now(), { cache: 'no-store' })).json();
@@ -197,6 +234,7 @@ async function pick(name) {
   document.getElementById('suspectKey').style.display = suspect.size ? 'inline-flex' : 'none';
   moved = false;
   fit(); stats(); draw();
+  if (spec) focus(spec);
   loadLive();
   clearInterval(pollTimer);
   pollTimer = setInterval(loadLive, 30000);
@@ -244,7 +282,7 @@ cv.addEventListener('pointermove', e => {
   });
   if (best >= 0) {
     const n = data.nodes[best];
-    text += `\nnode ${data.ids[best]}  ${['retail', 'generated', 'generated (navmesh)'][n[4]]}  radius ${n[3]}`;
+    text += `\nnode ${data.ids[best]} at (${n[0]}, ${n[1]})  radius ${n[3]}`;
     if (suspect.has(best)) text += `\nsuspected duplicate of node ${suspectInto[data.ids[best]]} (no trust ever landed here)`;
   }
   tip.style.display = 'block'; tip.style.left = (e.clientX + 14) + 'px'; tip.style.top = (e.clientY + 14) + 'px';
@@ -258,7 +296,14 @@ for (const box of document.querySelectorAll('input[data-layer]')) {
   box.addEventListener('change', () => { show[box.dataset.layer] = box.checked; draw(); });
 }
 document.getElementById('zone').addEventListener('change', e => pick(e.target.value));
-addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h && h !== zone) pick(h); });
+addEventListener('hashchange', () => {
+  const { name, spec } = parseHash();
+  if (name && name !== zone) pick(name, spec);
+  else if (spec && data) focus(spec);
+});
+document.getElementById('find').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.value.trim() && data) focus(e.target.value.trim());
+});
 document.getElementById('toggle').addEventListener('click', e => {
   const hud = document.getElementById('hud');
   hud.classList.toggle('min');
@@ -266,11 +311,12 @@ document.getElementById('toggle').addEventListener('click', e => {
 });
 
 (async () => {
-  for (const k of ['bg', 'link', 'extracted', 'recorded', 'navmesh', 'matched', 'new', 'probe', 'open', 'muted', 'suspect']) colors[k] = css('--' + k);
+  for (const k of ['bg', 'link', 'extracted', 'recorded', 'navmesh', 'matched', 'new', 'probe', 'open', 'muted', 'suspect', 'ink']) colors[k] = css('--' + k);
   resize();
   zones = await (await fetch('zones/index.json?' + Date.now(), { cache: 'no-store' })).json();
   document.getElementById('zone').innerHTML = zones.map(z => `<option value="${z.zone}">${z.name}</option>`).join('');
-  pick(location.hash.slice(1));
+  const { name, spec } = parseHash();
+  pick(name, spec);
 })();
 </script>
 </body>
