@@ -4,6 +4,7 @@ Retail FFXI mob pathing nodes for every zone, on one map: https://frankie-hz.git
 
 - **Retail (roam data):** node centers, arrival radii and links extracted from retail mob roam traces.
 - **Generated:** nodes filled in where no roam data reached, on recorded ground or on the LSB navmesh.
+- **Chase model** (`chase/`): every captured retail chase leg against the current chase model, worst first, with the retail fly, the model fly and the player's path over the nodes.
 - **Live trust probing:** zones being probed in game show each trust probe, the nodes it confirmed and new nodes found, updated every few minutes.
 
 `zones/<zone>.json` holds `nodes` as `[x, z, y, radius, source]` (source 0 retail, 1 generated, 2 generated on navmesh), the
